@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>日历</title>
+    <style>
+        :root {
+            --ios-red: #ff3b30;
+            --ios-bg: #000000;
+            --ios-gray: #8e8e93;
+            --ios-amber: #ff9f0a;
+            --glass: rgba(28, 28, 30, 0.95);
+        }
+
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        
+        body, html {
+            width: 100%; height: 100%; margin: 0; padding: 0;
+            background: var(--ios-bg); color: #fff;
+            font-family: -apple-system, system-ui, sans-serif;
+            overflow: hidden;
+        }
+
+        /* 顶部栏 */
+        .header-fixed {
+            position: fixed; top: 0; width: 100%;
+            background: rgba(0,0,0,0.9); backdrop-filter: blur(20px); z-index: 1000;
+            border-bottom: 0.5px solid #222;
+        }
+
+        .weekday-inner {
+            display: grid; grid-template-columns: repeat(7, 1fr);
+            padding: calc(env(safe-area-inset-top) + 10px) 2px 8px;
+        }
+        .weekday { text-align: center; font-size: 10px; font-weight: 600; color: var(--ios-gray); }
+
+        .today-banner {
+            display: none;
+            background: rgba(255, 159, 10, 0.12);
+            color: var(--ios-amber);
+            font-size: 13px; font-weight: 600; padding: 10px;
+            border-top: 0.5px solid rgba(255, 159, 10, 0.2);
+            text-align: center;
+        }
+        .today-banner.active { display: block; }
+
+        /* 内容滚动区 */
+        .scroller {
+            width: 100%; height: 100vh; overflow-y: auto;
+            padding-bottom: 120px;
+            scrollbar-width: none;
+            -webkit-overflow-scrolling: touch;
+        }
+        .scroller::-webkit-scrollbar { display: none; }
+
+        .month-container { width: 100%; max-width: 500px; margin: 0 auto 40px; padding: 0 4px; }
+        .month-label { font-size: 26px; font-weight: 800; margin: 15px 8px; }
+        .month-label span { color: var(--ios-red); font-size: 0.6em; margin-right: 8px; }
+
+        .days-grid { display: grid; grid-template-columns: repeat(7, 1fr); width: 100%; }
+
+        .day-item {
+            width: 100%; padding: 8px 0;
+            display: flex; flex-direction: column; align-items: center;
+            cursor: pointer; position: relative;
+        }
+
+        .holiday-text { font-size: 9px; color: var(--ios-gray); height: 12px; margin-bottom: 4px; }
+
+        .num-circle {
+            width: clamp(28px, 8vw, 38px); height: clamp(28px, 8vw, 38px);
+            display: flex; align-items: center; justify-content: center;
+            border-radius: 50%; font-size: 18px;
+        }
+
+        .is-today .num-circle { background: var(--ios-red); font-weight: bold; color: #fff; }
+        .has-note .num-circle { border: 1.5px solid #fff; }
+        .has-repeat .num-circle { border: 1.5px solid var(--ios-amber); }
+        .is-today.has-note .num-circle, .is-today.has-repeat .num-circle { border: none; background: var(--ios-red); }
+
+        /* 底部 Dock */
+        .dock {
+            position: fixed; bottom: 25px; left: 50%; transform: translateX(-50%);
+            background: var(--glass); backdrop-filter: blur(25px);
+            padding: 10px 20px; border-radius: 30px;
+            display: flex; gap: 20px; border: 0.5px solid rgba(255,255,255,0.15);
+            z-index: 2000;
+        }
+        .dock-btn { background: none; border: none; color: #fff; font-size: 14px; font-weight: 500; }
+
+        .modal {
+            position: fixed; inset: 0; background: rgba(0,0,0,0.8);
+            display: none; z-index: 3000; align-items: center; justify-content: center;
+        }
+        .modal.show { display: flex; }
+        .panel { width: 90%; max-width: 320px; background: #1c1c1e; border-radius: 24px; padding: 20px; }
+        textarea {
+            width: 100%; background: #2c2c2e; border: none; color: #fff;
+            border-radius: 12px; padding: 15px; font-size: 16px; margin: 15px 0;
+            resize: none; outline: none; font-family: inherit;
+        }
+        .flex-row { display: flex; justify-content: space-between; align-items: center; }
+        .empty-cell { visibility: hidden; }
+    </style>
+</head>
+<body>
+
+<div class="header-fixed" id="header">
+    <div class="weekday-inner">
+        <div class="weekday">日</div><div class="weekday">一</div><div class="weekday">二</div>
+        <div class="weekday">三</div><div class="weekday">四</div><div class="weekday">五</div>
+        <div class="weekday">六</div>
+    </div>
+    <div id="todayBanner" class="today-banner"></div>
+</div>
+
+<div class="scroller" id="scrollRoot">
+    <div id="mountPoint"></div>
+</div>
+
+<div class="dock">
+    <button class="dock-btn" onclick="scrollToToday(true)">今天</button>
+    <button class="dock-btn" onclick="exportData()">备份</button>
+    <button class="dock-btn" onclick="document.getElementById('fileIn').click()">恢复</button>
+    <input type="file" id="fileIn" hidden onchange="importData(this)">
+</div>
+
+<div class="modal" id="modal" onclick="closeModal()">
+    <div class="panel" onclick="event.stopPropagation()">
+        <div class="flex-row">
+            <h3 id="mTitle" style="margin:0; font-size:18px"></h3>
+            <button onclick="saveNote()" style="color:var(--ios-red); background:none; border:none; font-weight:700; font-size:16px;">完成</button>
+        </div>
+        <textarea id="mInput" rows="4"></textarea>
+        <div class="flex-row" style="background:#2c2c2e; padding:10px; border-radius:10px; font-size:14px;">
+            <span>每年循环提醒</span>
+            <input type="checkbox" id="mRepeat">
+        </div>
+    </div>
+</div>
+
+<script>
+    const KEY = 'global_cal_infinite_v16';
+    let db = JSON.parse(localStorage.getItem(KEY) || '{}');
+    let activeDate = null;
+    
+    let minYearLoaded, maxYearLoaded;
+    const scrollRoot = document.getElementById('scrollRoot');
+    const mountPoint = document.getElementById('mountPoint');
+
+    const HOLIDAYS = {
+    '1-1': '新年元旦',
+    '1-6': '主显节',
+    '2-14': '情人节',
+    '3-17': '圣帕特里克节',
+    '4-1': '愚人节',
+    '5-1': '五一劳动节',
+    '5-8': '欧战胜利日',
+    '6-21': '国际音乐节',
+    '7-4': '美国独立日',
+    '7-14': '法国国庆',
+    '8-15': '圣母升天节',
+    '10-3': '德国统一日',
+    '10-31': '万圣节前夜',
+    '11-1': '万圣节',
+    '11-5': '盖伊·福克斯之夜',
+    '11-11': '停战纪念日',
+    '12-6': '圣尼古拉斯节',
+    '12-8': '圣母无染原罪节',
+    '12-24': '平安夜',
+    '12-25': '圣诞节',
+    '12-26': '节礼日',
+    '12-31': '跨年夜'
+};
+
+    function init() {
+        const now = new Date();
+        const curY = now.getFullYear();
+        
+        minYearLoaded = curY;
+        maxYearLoaded = curY;
+
+        // 初始化加载：加载前一年、今年、下一年，保证滚动顺滑
+        loadYear(curY - 1, 'prepend');
+        loadYear(curY, 'append');
+        loadYear(curY + 1, 'append');
+        
+        // 核心：强制初始定位到本月
+        setTimeout(() => {
+            scrollToToday(false); // false 表示初始化时不需要平滑动画，直接跳到位置
+            showTodayBanner(now.getFullYear(), now.getMonth() + 1, now.getDate());
+        }, 50);
+
+        scrollRoot.addEventListener('scroll', handleInfiniteScroll);
+    }
+
+    function handleInfiniteScroll() {
+        const scrollTop = scrollRoot.scrollTop;
+        const scrollHeight = scrollRoot.scrollHeight;
+        const clientHeight = scrollRoot.clientHeight;
+
+        if (scrollTop + clientHeight > scrollHeight - 300) {
+            maxYearLoaded++;
+            loadYear(maxYearLoaded, 'append');
+        }
+
+        if (scrollTop < 300) {
+            minYearLoaded--;
+            const oldHeight = scrollRoot.scrollHeight;
+            loadYear(minYearLoaded, 'prepend');
+            const newHeight = scrollRoot.scrollHeight;
+            scrollRoot.scrollTop = scrollTop + (newHeight - oldHeight);
+        }
+    }
+
+    function loadYear(y, mode) {
+        const frag = document.createDocumentFragment();
+        for (let m = 1; m <= 12; m++) {
+            frag.appendChild(renderMonth(y, m));
+        }
+        if (mode === 'append') mountPoint.appendChild(frag);
+        else mountPoint.prepend(frag);
+    }
+
+    // 锚定函数
+    function scrollToToday(smooth = true) {
+        const now = new Date();
+        const id = `m-${now.getFullYear()}-${now.getMonth() + 1}`;
+        const target = document.getElementById(id);
+        if (target) {
+            // 计算 offset，确保标题在 header 下方
+            const headerHeight = document.getElementById('header').offsetHeight;
+            const topPosition = target.offsetTop - headerHeight;
+            
+            scrollRoot.scrollTo({
+                top: topPosition,
+                behavior: smooth ? 'smooth' : 'auto'
+            });
+        }
+    }
+
+    function renderMonth(y, m) {
+        const div = document.createElement('div');
+        div.className = 'month-container';
+        div.id = `m-${y}-${m}`;
+        div.innerHTML = `<div class="month-label"><span>${y}</span>${m}月</div><div class="days-grid"></div>`;
+        
+        const grid = div.querySelector('.days-grid');
+        const firstDay = new Date(y, m - 1, 1).getDay();
+        const totalDays = new Date(y, m, 0).getDate();
+        const now = new Date();
+
+        for (let i = 0; i < firstDay; i++) {
+            const e = document.createElement('div'); e.className = 'day-item empty-cell'; grid.appendChild(e);
+        }
+
+        for (let d = 1; d <= totalDays; d++) {
+            const dKey = `${y}-${m}-${d}`;
+            const rKey = `r-${m}-${d}`;
+            const isToday = d === now.getDate() && (m-1) === now.getMonth() && y === now.getFullYear();
+            
+            const cell = document.createElement('div');
+            cell.className = `day-item ${isToday ? 'is-today' : ''} ${db[dKey] ? 'has-note' : ''} ${db[rKey] ? 'has-repeat' : ''}`;
+            
+            const h = HOLIDAYS[`${m}-${d}`] || '';
+            cell.innerHTML = `<div class="holiday-text">${h}</div><div class="num-circle">${d}</div>`;
+            cell.onclick = () => openModal(y, m, d);
+            grid.appendChild(cell);
+        }
+        return div;
+    }
+
+    function showTodayBanner(y, m, d) {
+        const note = db[`${y}-${m}-${d}`] || db[`r-${m}-${d}`];
+        const festival = HOLIDAYS[`${m}-${d}`];
+        const banner = document.getElementById('todayBanner');
+        let content = [];
+        if (festival) content.push(`✨ ${festival}`);
+        if (note) content.push(`${note}`);
+        if (content.length > 0) {
+            banner.innerText = content.join(' | ');
+            banner.classList.add('active');
+        } else {
+            banner.classList.remove('active');
+        }
+        scrollRoot.style.paddingTop = document.getElementById('header').offsetHeight + 'px';
+    }
+
+    function openModal(y, m, d) {
+        activeDate = {y, m, d};
+        document.getElementById('mTitle').innerText = `${y}/${m}/${d}`;
+        document.getElementById('mInput').value = db[`r-${m}-${d}`] || db[`${y}-${m}-${d}`] || '';
+        document.getElementById('mRepeat').checked = !!db[`r-${m}-${d}`];
+        document.getElementById('modal').classList.add('show');
+    }
+
+    function closeModal() { document.getElementById('modal').classList.remove('show'); }
+
+    function saveNote() {
+        const {y, m, d} = activeDate;
+        const val = document.getElementById('mInput').value.trim();
+        const rep = document.getElementById('mRepeat').checked;
+        delete db[`${y}-${m}-${d}`]; delete db[`r-${m}-${d}`];
+        if (val) {
+            if (rep) db[`r-${m}-${d}`] = val;
+            else db[`${y}-${m}-${d}`] = val;
+        }
+        localStorage.setItem(KEY, JSON.stringify(db));
+        location.reload(); 
+    }
+
+    function exportData() {
+        const blob = new Blob([JSON.stringify(db)], {type: 'application/json'});
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'backup.json'; a.click();
+    }
+
+    function importData(input) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            db = JSON.parse(e.target.result);
+            localStorage.setItem(KEY, JSON.stringify(db));
+            location.reload();
+        };
+        reader.readAsText(input.files[0]);
+    }
+
+    init();
+</script>
+</body>
+</html>
